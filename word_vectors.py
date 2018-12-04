@@ -44,6 +44,6 @@ if __name__ == "__main__":
     if len(sys.argv) == 3:
         main(sys.argv[1], sys.argv[2])
     elif len(sys.argv) == 4:
-        main(sys.argv[1], sys.argv[2], sys.argv[3])
+        main(sys.argv[1], sys.argv[2], dataset=sys.argv[3])
     else:
-        print('incorrect number of args. Usage: python word_vectors.py input_file.json output_file.txt')
+        print('incorrect number of args. Usage: python word_vectors.py input_file.json output_file.txt [dataset]')

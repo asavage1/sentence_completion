@@ -1,6 +1,16 @@
 #!/usr/bin/env python
 # https://github.com/spro/char-rnn.pytorch
 
+""" The rnn code is from that ^ repo up there
+    What I have so far/ what im trying to do:
+        train.py trains the rnn and generates a model in a .pt file
+        I defined a reward function in reward.py (curretnly im trying to make
+        it penalise long sentences) and am using the reward_trainer.py script to load a model, have it generate sentences, compute a reward for that sentence and backpropagate from there.
+
+        I think you need to use the .backward() function for that but it isnt working right now. I think I need to somehow connect the hidden layers to the output correctly (I think that's where its not working) but I cant tell for sure.
+        
+"""
+
 import torch
 import torch.nn as nn
 from torch.autograd import Variable

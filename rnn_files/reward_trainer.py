@@ -5,56 +5,91 @@ import torch.nn as nn
 import argparse
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import os
+import numpy as np
 
-# from train import *
-from generate import *
+from helpers import *
+from model import *
 from reward import compute_reward
 from torch.autograd import Variable
 
-def reward_train(inp, target, batch_size, chunk_len, lengths):
-    hidden = decoder.init_hidden(batch_size)
-    if args.cuda:
-        hidden = hidden.cuda()
-    decoder.zero_grad()
-    # loss = 0
+TERMINAL_STATES = [".", "?", "!"]
 
-    # for c in range(chunk_len):
-    #     output, hidden = decoder(inp[:,c], hidden)
-    #     loss += criterion(output.view(batch_size, -1), target[:,c])
-
-    sent = generate(decoder, 'Lord', 100, cuda=args.cuda)
-    reward = compute_reward(sent)
+def reward_train(decoder, lengths):
+    """ ok this is going to look very similar to our generate function
+        generate sentence, compute reward, backpropagate
+    """ 
+    eps = np.finfo(np.float32).eps.item()
+    sent, log_probs, policy_rewards = generate(decoder, 'Wh', 100, cuda=args.cuda) 
     lengths.append(len(sent))
 
-    reward.backward()
-    decoder_optimizer.step()
-
-    return reward
-
+    R = 0
+    policy_loss = []
+    rewards = []
+    for r in policy_rewards[::-1]:
+        R = r + 0.99 * R
+        rewards.insert(0, R)
+    rewards = torch.tensor(rewards, requires_grad=True)
+    rewards = (rewards - rewards.mean()) / (rewards.std() + eps)
+    for log_prob, reward in zip(log_probs, rewards):
+        policy_loss.append(-log_prob * reward)
+    optimizer.zero_grad()
+    policy_loss = torch.stack(policy_loss).sum()
+    policy_loss.backward()
+    optimizer.step()
+    
+    return 1
+    
 def save():
     save_filename = os.path.splitext(os.path.basename(args.filename))[0] + '_rewarded.pt'
     torch.save(decoder, save_filename)
     print('Saved as %s' % save_filename)
 
-def random_training_set(chunk_len, batch_size):
-    inp = torch.LongTensor(batch_size, chunk_len)
-    target = torch.LongTensor(batch_size, chunk_len)
-    for bi in range(batch_size):
-        start_index = random.randint(0, file_len - chunk_len)
-        end_index = start_index + chunk_len + 1
-        chunk = file[start_index:end_index]
-        inp[bi] = char_tensor(chunk[:-1])
-        target[bi] = char_tensor(chunk[1:])
-    inp = Variable(inp)
-    target = Variable(target)
-    if args.cuda:
-        inp = inp.cuda()
-        target = target.cuda()
-    return inp, target
+def generate(decoder, prime_str='A', predict_len=100, temperature=0.8, cuda=False):
 
+    hidden = decoder.init_hidden(1)
+    prime_input = Variable(char_tensor(prime_str).unsqueeze(0))
 
-# Run as standalone script
-# if __name__ == '__main__':
+    if cuda:
+        hidden = hidden.cuda()
+        prime_input = prime_input.cuda()
+    predicted = prime_str
+
+    # Use priming string to "build up" hidden state
+    for p in range(len(prime_str) - 1):
+        _, hidden = decoder(prime_input[:,p], hidden)
+        
+    inp = prime_input[:,-1]
+    log_probs = []
+    rewards = []
+    
+    for p in range(predict_len):
+        # this gives us the new output vector from our current policy
+        output, hidden = decoder(inp, hidden)
+        
+        # Sample from the network as a multinomial distribution
+        output_dist = output.data.view(-1).div(temperature).exp()
+        top_i = torch.multinomial(output_dist, 1)[0]
+        log_prob = math.log(output_dist[top_i])
+        log_probs.append(log_prob)
+
+        # Add predicted character to string and use as next input
+        predicted_char = all_characters[top_i]
+
+        predicted += predicted_char
+        inp = Variable(char_tensor(predicted_char).unsqueeze(0))
+        if cuda:
+            inp = inp.cuda()
+
+        # the episode is over if sentence ends
+        if predicted_char in TERMINAL_STATES:
+            rewards.append(10000000000)
+            break
+        else:
+            rewards.append(-2000)
+
+    return predicted, log_probs, rewards
+
 # Parse command line arguments
 argparser = argparse.ArgumentParser()
 argparser.add_argument('filename', type=str)
@@ -67,21 +102,22 @@ argparser.add_argument('--cuda', action='store_true')
 argparser.add_argument('--learning_rate', type=float, default=0.01)
 args = argparser.parse_args()
 
-decoder = torch.load("obama.pt")
-decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=args.learning_rate)
-file, file_len = read_file(args.filename)
+
+decoder = torch.load(args.filename)
+optimizer = torch.optim.Adam(decoder.parameters(), lr=args.learning_rate)
+
 start = time.time()
 lengths = []
 loss_total = 0
 
 print("Training for %d epochs..." % args.n_epochs)
 for epoch in tqdm(range(1, args.n_epochs + 1)):
-    loss = reward_train(*random_training_set(args.chunk_len, args.batch_size), args.chunk_len, args.batch_size, lengths)
+    loss = reward_train(decoder, lengths)
     loss_total += loss
 
     if epoch % args.print_every == 0:
         print('[%s (%d %d%%) %.4f]' % (time_since(start), epoch, epoch / args.n_epochs * 100, loss_total/epoch))
-        sent = generate(decoder, 'Wh', 100, cuda=args.cuda)
+        sent, _ , _= generate(decoder, 'Wh', 100, cuda=args.cuda)
         print(sent, '\n')
 
 plt.plot(lengths)

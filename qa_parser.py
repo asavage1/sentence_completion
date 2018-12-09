@@ -21,4 +21,4 @@ if __name__ == '__main__':
     elif len(sys.argv) == 4:
         main(sys.argv[1], sys.argv[2], delimiter=sys.argv[3])
     else:
-        print('incorrect number of args. Usage: python word_vectors.py input_file.json output_file.txt [delimiter]')
+        print('incorrect number of args. Usage: python qa_parser.py input_file.json output_file.txt [delimiter]')

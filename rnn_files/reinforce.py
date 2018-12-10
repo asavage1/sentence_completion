@@ -61,9 +61,9 @@ if __name__ == '__main__':
         
         policy_loss = torch.tensor(policy_loss, requires_grad=True)
         # policy_loss = torch.tensor([t.item() for t in policy_loss], requires_grad=True)
-        policy_loss = torch.sum(policy_loss)
 
         optimizer.zero_grad()
+        policy_loss = torch.sum(policy_loss)
         policy_loss.backward()
         optimizer.step()
 

@@ -35,7 +35,7 @@ def generate(decoder, prime_str='A', predict_len=100, temperature=0.8, cuda=Fals
         output_dist = output.data.view(-1).div(temperature).exp()
         top_i = torch.multinomial(output_dist, 1)[0]
 
-        predicted_prob = torch.log(output_dist[top_i])
+        predicted_prob = torch.log((output_dist / output_dist.sum())[top_i])
         log_probs.append(predicted_prob)
 
         # Add predicted character to string and use as next input
@@ -50,7 +50,7 @@ def generate(decoder, prime_str='A', predict_len=100, temperature=0.8, cuda=Fals
             rewards.append(100)
             break
         else:
-            rewards.append(0)
+            rewards.append(-1)
 
     return predicted, log_probs, rewards
 

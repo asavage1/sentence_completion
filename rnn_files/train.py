@@ -71,6 +71,7 @@ def train(inp, target):
         output, hidden = decoder(inp[:,c], hidden)
         loss += criterion(output.view(args.batch_size, -1), target[:,c])
 
+    hidden_copy = torch.tensor(hidden)
     loss.backward()
     decoder_optimizer.step()
 

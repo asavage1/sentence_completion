@@ -2,3 +2,4 @@
 .idea/
 *.txt
 rnn_files/__pycache__
+shortened_sents/__pycache__

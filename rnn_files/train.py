@@ -50,10 +50,6 @@ def random_training_set(chunk_len, batch_size):
         start_index = random.randint(0, file_len - chunk_len)
         end_index = start_index + chunk_len + 1
         chunk = file[start_index:end_index]
-        print(chunk)
-        print(chunk[:-1])
-        print(chunk[1:])
-        break
         inp[bi] = char_tensor(chunk[:-1])
         target[bi] = char_tensor(chunk[1:])
 
@@ -78,7 +74,7 @@ def train(inp, target):
     loss.backward()
     decoder_optimizer.step()
 
-    return loss.data[0] / args.chunk_len
+    return loss.item() / args.chunk_len
 
 def save():
     save_filename = os.path.splitext(os.path.basename(args.filename))[0] + '.pt'

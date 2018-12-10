@@ -25,12 +25,18 @@ def generate(decoder, prime_str='A', predict_len=100, temperature=0.8, cuda=Fals
         
     inp = prime_input[:,-1]
     
+    log_probs = []
+    rewards = []
+
     for p in range(predict_len):
         output, hidden = decoder(inp, hidden)
         
         # Sample from the network as a multinomial distribution
         output_dist = output.data.view(-1).div(temperature).exp()
         top_i = torch.multinomial(output_dist, 1)[0]
+
+        predicted_prob = torch.log(output_dist[top_i])
+        log_probs.append(predicted_prob)
 
         # Add predicted character to string and use as next input
         predicted_char = all_characters[top_i]
@@ -41,9 +47,12 @@ def generate(decoder, prime_str='A', predict_len=100, temperature=0.8, cuda=Fals
 
         # the episode is over if sentence ends
         if predicted_char in TERMINAL_STATES:
+            rewards.append(100)
             break
+        else:
+            rewards.append(0)
 
-    return predicted
+    return predicted, log_probs, rewards
 
 # Run as standalone script
 if __name__ == '__main__':
@@ -59,5 +68,7 @@ if __name__ == '__main__':
 
     decoder = torch.load(args.filename)
     del args.filename
-    print(generate(decoder, **vars(args)))
+
+    sent, _, _ = generate(decoder, **vars(args))
+    print(sent)
 

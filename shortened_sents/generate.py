@@ -4,7 +4,7 @@ import sys
 import torch
 import os
 import argparse
-from torch.distributions import Multinomial, Categorical, Exponential, Binomial
+from torch.distributions import Multinomial
 
 from helpers import *
 from model import *
@@ -31,24 +31,10 @@ def generate(decoder, prime_str='A', predict_len=100, temperature=0.8, cuda=Fals
 
     for p in range(predict_len):
         output, hidden = decoder(inp, hidden)
-        # print("Output")
-        # print(output)
-        # print("View")
-        # print(output.data.view(-1))
-        # print("Temperature")
-        # print(output.data.view(-1).div(temperature))
-        # print("Exp")
-        # print(output.data.view(-1).div(temperature).exp())
-        # print("Experiment")
-        # print(output.div(temperature))
+
         # Sample from the network as a multinomial distribution
         output_dist = output.div(temperature).exp()
         top_i = torch.multinomial(output_dist, 1)[0]
-        # sys.exit()
-        # print(output)
-        # print(output_dist)
-        # predicted_prob = torch.log(output_dist[top_i])
-        # log_probs.append(predicted_prob)
 
         m = Multinomial(100, output_dist)
         action = m.sample()
@@ -85,6 +71,15 @@ if __name__ == '__main__':
     decoder = torch.load(args.filename)
     del args.filename
 
-    sent, _, _ = generate(decoder, **vars(args))
-    print(sent)
+    lengths = []
+    # generate 100 sentences
+    num_sents = 100
+    for i in range(num_sents):
+        sent, _, _ = generate(decoder, **vars(args))
+        # print the last sentence as a demonstration
+        if i == num_sents - 1:
+            print("Last sentence generated: \n\n", sent)
+        lengths.append(len(sent))
+
+    print("\nAvg length for %d sentences: %2.2f" % (num_sents, sum(lengths)/len(lengths)))
 

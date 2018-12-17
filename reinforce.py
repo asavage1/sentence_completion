@@ -4,6 +4,7 @@ import numpy as np
 import unidecode
 import re
 import random
+import math
 from itertools import count
 import sys
 import os
@@ -20,6 +21,7 @@ print("Done loading spacy vectors\n")
 
 word2vec = lambda word: nlp.vocab[word].vector
 
+
 def get_vocab(filename):
     """ Returns a list of *unique* words in the file 
         and the number of unique words in the file.
@@ -30,6 +32,7 @@ def get_vocab(filename):
     unique_words = list(set(file))
 
     return unique_words, len(unique_words)
+
 
 def get_qa_pairs(filename):
     """ Returns the a list of (q,a) tuples
@@ -53,11 +56,12 @@ parser.add_argument('--log-interval', type=int, default=10, metavar='N',
 parser.add_argument('--threshold', type=int, default=1, help='cutoff dist')
 args = parser.parse_args()
 
+
 class Policy(nn.Module):
     def __init__(self, input_size, output_size):
         super(Policy, self).__init__()
-         # TODO: input=300, hidden=?, output=len(vocab)
-        self.affine1 = nn.Linear(input_size, 128) 
+        # TODO: input=300, hidden=?, output=len(vocab)
+        self.affine1 = nn.Linear(input_size, 128)
         self.affine2 = nn.Linear(128, output_size)
 
         self.saved_log_probs = []
@@ -75,6 +79,7 @@ optimizer = optim.Adam(policy.parameters(), lr=1e-2)
 eps = np.finfo(np.float32).eps.item()
 parse_sent = lambda sent: np.sum(list(map(word2vec, sent)), axis=0)
 
+
 def select_action(state):
     state = torch.from_numpy(state).float().unsqueeze(0)
     probs = policy(state)
@@ -82,6 +87,7 @@ def select_action(state):
     action = m.sample()
     policy.saved_log_probs.append(m.log_prob(action))
     return word2vec(vocab[action.item()]), action
+
 
 def finish_episode():
     R = 0
@@ -91,13 +97,13 @@ def finish_episode():
         R = r + args.gamma * R
         rewards.insert(0, R)
     rewards = torch.tensor(rewards)
-    
+
     # reinforce with baseline
     rewards = (rewards - rewards.mean()) / (rewards.std() + eps)
     for log_prob, reward in zip(policy.saved_log_probs, rewards):
         policy_loss.append(-log_prob * reward)
     policy_loss = torch.cat(policy_loss).sum()
-    
+
     # backprop
     optimizer.zero_grad()
     policy_loss.backward()
@@ -105,12 +111,22 @@ def finish_episode():
     del policy.rewards[:]
     del policy.saved_log_probs[:]
 
+
 def step(state, action, expected_action):
     """ new_state is the sum of the action and the state word vectors
     """
     new_state = np.sum([state, action], axis=0)
-    distance = np.linalg.norm(np.subtract(new_state, expected_action))
-    return new_state, 1 / distance
+
+    # Inverse distance as a reward
+    # distance = np.linalg.norm(np.subtract(new_state, expected_action))
+    # reward = 1 / distance
+
+    # Inverse angle as a distance
+    angle = math.acos(np.dot(new_state, expected_action) / (np.linalg.norm(new_state) * np.linalg.norm(expected_action)))
+    reward = math.cos(angle)  # could just use dot product of unit vectors, but it isn't as obvious what's happening
+
+    return new_state, reward
+
 
 def parse_qa(qa_pairs):
     """ Converts each (q,a) pair into word vector and returns
@@ -119,39 +135,50 @@ def parse_qa(qa_pairs):
         Returns a list of the converted (q,a) word vectors
     """
     trainings = []
-    
+
     for q, a in qa_pairs:
+        # curr_q = q
+        # for a_word in a:
+        #     trainings.append((parse_sent(curr_q), word2vec(a_word)))
+        #     curr_q += a_word
         trainings.append((parse_sent(q), parse_sent(a)))
     return trainings
+
 
 def save():
     save_filename = os.path.splitext(os.path.basename(args.filename))[0] + '.pt'
     torch.save(policy, save_filename)
     print('Saved as %s' % save_filename)
 
+
 def main():
     qa = get_qa_pairs(args.filename)
-    
+
     # build the training set
     training_set = parse_qa(qa)
 
     print("Number of total episodes: ", len(training_set))
     for i in range(len(training_set)):
+        # TODO: Why wouldn't we do this?
         # generate a random q,a pair
-        rand_index = i #random.randint(0, len(training_set) - 1)
+        rand_index = i  # random.randint(0, len(training_set) - 1)
         random_q, random_a = training_set[rand_index]
-        ending_length = len(qa[rand_index][1]) # length of answer
 
-        # TODO: state should be 300-dimensional word vector (numpy.ndarray)
-        state = np.array(random_q)  
-        
+        # TODO: Should we be telling it when to stop? We can give it a large reward if it stops
+        # TODO: when it is supposed to, but stopping it at the actual length seems a little too hardcoded
+        ending_length = len(qa[rand_index][1])  # length of answer
+
+        state = np.array(random_q)
+
         # Don't infinite loop while learning
-        for t in range(100):  
+        for t in range(100):
             action_vec, action_idx = select_action(state)
 
-            state, reward = step(state, action_vec, random_a) 
+            state, reward = step(state, action_vec, random_a)
             policy.rewards.append(reward)
-            if (t == ending_length): # end of sentence
+
+            # TODO: may just want to add to reward
+            if t == ending_length:
                 break
 
         finish_episode()
@@ -164,7 +191,7 @@ def main():
     sent_len = 10
     for i in range(sent_len):
         init_state = parse_sent(prime_str)
-        _, action_idx = select_action(state)
+        _, action_idx = select_action(init_state)
         prime_str += " " + vocab[action_idx]
 
     print(prime_str)

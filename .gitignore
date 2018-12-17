@@ -2,4 +2,7 @@
 .idea/
 *.txt
 .DS_Store
-
+!word_language_model/model.pt
+!word_language_model/data/wikitext-2/*
+__pycache__
+*.pt

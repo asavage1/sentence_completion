@@ -8,6 +8,7 @@ import numpy as np
 import torch.optim as optim
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer 
+import enchant
 
 parser = argparse.ArgumentParser()
 
@@ -22,7 +23,22 @@ parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
 parser.add_argument('--temperature', type=float, default=1.0,
                     help='temperature - higher will increase diversity')
+parser.add_argument('--gamma', type=float, default=0.01,
+                    help='gamma higher will increase responsilbility of previous actions')
+parser.add_argument('--num_episodes', type=int, default=5,
+                    help='num episodes - the number of episodes to train on before weights update')
+parser.add_argument('--num_epochs', type=int, default=3,
+                    help='num_epochs - number of times the episode batches are run')
+parser.add_argument('--validity', action='store_true',
+                    help="Runs the experiment where the reward is for valid words in a sentence.")
+parser.add_argument('--short_sent', action='store_true',
+                    help="Runs the experiment where the the reward is for shorter sentences.")
+parser.add_argument('--long_sent', action='store_true',
+                    help="Runs the experiment where the the reward is for shorter sentences.")
+parser.add_argument('--sentiment', action='store_true',
+                    help="Runs the experiment where the the reward is for positive sentences.")
 args = parser.parse_args()
+
 
 # Set the random seed manually for reproducibility.
 torch.manual_seed(args.seed)
@@ -33,7 +49,6 @@ if args.temperature < 1e-3:
     parser.error("--temperature has to be greater or equal 1e-3")
 
 device = torch.device("cuda" if args.cuda else "cpu")
-TERMINAL_STATES = ['!', '.', '?']
 
 # load model 
 model = torch.load('model.pt', map_location={'cuda:0': 'cpu'})
@@ -47,27 +62,39 @@ ntokens = len(corpus.dictionary)
 hidden = model.init_hidden(1)
 print("Finished loading vocabulary")
 
-################### TODO: Make these commandline args ###############
-num_episodes = 5
-num_epochs = 5
-gamma = 0.01
-#####################################################################
-
 # Sentiment Classifier
 sentiment = SentimentIntensityAnalyzer()
+
+# valid word checker
+validity = enchant.Dict("en_US")
+
+TERMINAL_STATES = ['!', '.', '?']
 
 # keep track
 avg_lengths = []
 lengths = []
+validity_scores = []
+sentiment_scores = []
 
-def compute_reward(action):
+def compute_reward(action, sent):
     """ Return reward, done
             reward (int)
             done   (bool)
+
+        Args:
+            action (word)
+            sent    Sentence generated so far 
     """
-    # return long_sentences(action)
-    return short_sentences(action)
-    # return sentiment_classifier(action)
+    return positive_valid_sentences(action, sent)
+
+    if args.long_sent:
+        return long_sentences(action)
+    if args.short_sent:
+        return short_sentences(action)
+    if args.validity:
+        return validity_checker(action)
+    if args.sentiment:
+        return sentiment_classifier(action, sent)
     
 ######################################################################
 ####################### REWARD FUNCTIONS #############################
@@ -76,7 +103,7 @@ def short_sentences(action):
     if action in TERMINAL_STATES:
         return 0.1, True
     else:
-        return 0, False
+        return 0.0, False
 
 def long_sentences(action):
     if action in TERMINAL_STATES:
@@ -84,20 +111,65 @@ def long_sentences(action):
     else:
         return 0.1, False
 
-def sentiment_classifier(action):
-    score = sentiment.polarity_scores(action)
-    reward = score['compound']
-
+def sentiment_classifier(action, sent):
     if action in TERMINAL_STATES:
+        score = sentiment.polarity_scores(sent + action)
+        reward = score['compound']
         done = True
     else:
+        reward = 0.0
         done = False
-
     return reward, done
 
+def validity_checker(action):
+    if (validity.check(action)):
+        reward = 0.1
+    else:
+        reward = -0.1
+
+    # always return done=False, we let the main program
+    # decide how long the episode is going to be
+    return reward, False
+
+def positive_valid_sentences(action, sent):
+    sent_score, done = sentiment_classifier(action, sent)
+    validity_score, _ = validity_checker(action)
+    repetion_score, _ = avoid_repetition(action, sent)
+    shortness_score, _ = short_sentences(action)
+
+    sent_weight = 0.0
+    validity_weight = 0.5
+    repetition_weight = 0.48
+    shortness_weight = 0.02
+
+    reward = sent_weight * sent_score \
+           + validity_weight * validity_score \
+           + repetition_weight * repetion_score \
+           + shortness_weight * shortness_score
+    return reward, done
+
+def avoid_repetition(action, sent):
+    sent = sent + action
+    words = sent.split(' ')
+
+    # the higher the score, the worse the repetition
+    repetition_score = len(words)/ len(set(words))
+    reward = 1 / repetition_score
+
+    if action in TERMINAL_STATES:
+        done = True 
+    else:
+        done = False   
+        
+    return  reward, done
+
+
+
 ######################################################################
 ######################################################################
 ######################################################################
+
+
 def select_action(state):
     output, hid = model(state, hidden)
     word_weights = output.squeeze().div(args.temperature).exp().cpu()
@@ -107,12 +179,13 @@ def select_action(state):
     return word, log_prob, word_idx
 
 # backpropagation is done at the end of every epoch
-for j in range(num_epochs):
+for j in range(args.num_epochs):
     loss_bank = [] # stores the losses of all episodes of an epoch
     state = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
     
     # generate multiple episodes to reduce variance
-    for i in range(num_episodes):
+    for i in range(args.num_episodes):
+        num_actions = 0
         done = False
         policy_rewards = []
         action_probs = []
@@ -120,20 +193,25 @@ for j in range(num_epochs):
         model.train() # this allows params to be trained
 
         # keep selecting actions until the episode ends
-        while not done:
+        while not done and num_actions < 100:
+            num_actions += 1
             # action prob is a log probability
             action, action_prob, word_idx = select_action(state)
-            policy_reward, done = compute_reward(action)
+            policy_reward, done = compute_reward(action, sent)
             policy_rewards.append(policy_reward)
             action_probs.append(action_prob)
             sent += action + ' '
             state = torch.tensor(np.array([[word_idx.item()]]))
 
+        # average of score in epoch
+        validity_scores.append(sum(policy_rewards)/len(policy_rewards))
+        sentiment_scores.append(policy_rewards[-1])
+
         # leave the eligibility trace
         R = 0
         rewards = []
         for r in policy_rewards[::-1]:
-            R = r + gamma * R
+            R = r + args.gamma * R
             rewards.insert(0, R)
         rewards = torch.tensor(rewards)
 
@@ -153,9 +231,11 @@ for j in range(num_epochs):
         avg_lengths.append(sum(lengths)/len(lengths))
 
         # log at the end of the epoch
-        if i == num_episodes - 1:
+        if i == args.num_episodes - 1:
             print("Epoch %d, %s" % (j, sent))
             print("Average lengths: %2.2f" % (avg_lengths[-1]) )
+            print("Validity_score: %2.2f" % (sum(policy_rewards)/len(policy_rewards)))
+            print(sentiment_scores[-1])
 
     # backprop all of the episodes at end of epoch
     for policy_loss in loss_bank:
@@ -165,8 +245,30 @@ for j in range(num_epochs):
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.25)
         optimizer.step()
 
-plt.plot(avg_lengths)
-plt.title("Reward : 0.1 if action is end of sentence, 0.0 otherwise")
-plt.xlabel("Number of episodes")
-plt.ylabel("Average length of sentences (in words)")
-plt.savefig('lengths.jpg')
+if args.sentiment:
+    plt.plot(sentiment_scores)
+    plt.title("Sentiment score of sentences vs episodes")
+    plt.xlabel("Number of episodes")
+    plt.ylabel("Sentiment score")
+    plt.savefig('sentiment.jpg')
+
+if args.short_sent:
+    plt.plot(avg_lengths)
+    plt.title("Reward : 0.1 if action is end of sentence, 0.0 otherwise")
+    plt.xlabel("Number of episodes")
+    plt.ylabel("Average length of sentences (in words)")
+    plt.savefig('short_lengths.jpg')
+
+if args.long_sent:
+    plt.plot(avg_lengths)
+    plt.title("Reward : 0.0 if action is end of sentence, 0.1 otherwise")
+    plt.xlabel("Number of episodes")
+    plt.ylabel("Average length of sentences (in words)")
+    plt.savefig('long_lengths.jpg')
+
+if args.validity:
+    plt.plot(validity_scores)
+    plt.title("Reward : 0.1 if action a valid word, -0.1 otherwise")
+    plt.xlabel("Number of epochs")
+    plt.ylabel("Average validity score in the epoch")
+    plt.savefig('validity.jpg')

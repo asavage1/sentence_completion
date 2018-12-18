@@ -58,11 +58,11 @@ args = parser.parse_args()
 
 
 class Policy(nn.Module):
-    def __init__(self, input_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size):
         super(Policy, self).__init__()
         # TODO: input=300, hidden=?, output=len(vocab)
-        self.affine1 = nn.Linear(input_size, 128)
-        self.affine2 = nn.Linear(128, output_size)
+        self.affine1 = nn.Linear(input_size, hidden_size)
+        self.affine2 = nn.Linear(hidden_size, output_size)
 
         self.saved_log_probs = []
         self.rewards = []
@@ -74,7 +74,8 @@ class Policy(nn.Module):
 
 
 vocab, size = get_vocab(args.filename)
-policy = Policy(300, size)
+# policy = Policy(input_size=300, hidden_size=5, output_size=size)
+policy = torch.load("qa_text_training_set.pt")
 optimizer = optim.Adam(policy.parameters(), lr=1e-2)
 eps = np.finfo(np.float32).eps.item()
 parse_sent = lambda sent: np.sum(list(map(word2vec, sent)), axis=0)
@@ -112,10 +113,10 @@ def finish_episode():
     del policy.saved_log_probs[:]
 
 
-def step(state, action, expected_action):
+def step(state, action, expected_action, curr_steps):
     """ new_state is the sum of the action and the state word vectors
     """
-    new_state = np.sum([state, action], axis=0)
+    new_state = (curr_steps / (curr_steps + 1)) * state + (1 / (curr_steps + 1)) * action
 
     # Inverse distance as a reward
     # distance = np.linalg.norm(np.subtract(new_state, expected_action))
@@ -158,7 +159,7 @@ def main():
     training_set = parse_qa(qa)
 
     print("Number of total episodes: ", len(training_set))
-    for i in range(len(training_set)):
+    for i in range(150):  # range(len(training_set)):
         # TODO: Why wouldn't we do this?
         # generate a random q,a pair
         rand_index = i  # random.randint(0, len(training_set) - 1)
@@ -168,13 +169,15 @@ def main():
         # TODO: when it is supposed to, but stopping it at the actual length seems a little too hardcoded
         ending_length = len(qa[rand_index][1])  # length of answer
 
-        state = np.array(random_q)
+        state = np.array(random_q) / len(random_q)
+        n_curr_words = len(random_q)
 
         # Don't infinite loop while learning
         for t in range(100):
             action_vec, action_idx = select_action(state)
 
-            state, reward = step(state, action_vec, random_a)
+            state, reward = step(state, action_vec, random_a, n_curr_words)
+            n_curr_words += 1
             policy.rewards.append(reward)
 
             # TODO: may just want to add to reward
@@ -195,6 +198,10 @@ def main():
         prime_str += " " + vocab[action_idx]
 
     print(prime_str)
+
+    # for word in vocab[:100]:
+    #     _, action_i = select_action(parse_sent(word))
+    #     print(word, vocab[action_i])
 
 
 if __name__ == '__main__':

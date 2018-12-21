@@ -1,20 +1,15 @@
-###############################################################################
-# Language Modeling on Wikitext-2
-#
-# This file generates new sentences sampled from the language model
-#
-###############################################################################
+""" This script generates a sentence with an argument model. If the model is 
+    not provided, then it will search for a model.pt file in the directory and use that model for its generation.
+
+    Adapted from https://github.com/pytorch/examples/blob/master/word_language_model/generate.py
+"""
 
 import argparse
-import sys
 import torch
 from torch.autograd import Variable
-from nltk.sentiment.vader import SentimentIntensityAnalyzer 
-from matplotlib import pyplot as plt
-
 import data
 
-parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Language Model')
+parser = argparse.ArgumentParser()
 
 # Model parameters.
 parser.add_argument('--data', type=str, default='./data/wikitext-2',
@@ -32,7 +27,7 @@ parser.add_argument('--temperature', type=float, default=1.0,
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
-# torch.manual_seed(args.seed)
+torch.manual_seed(args.seed)
 if torch.cuda.is_available():
     if not args.cuda:
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
@@ -40,7 +35,6 @@ if args.temperature < 1e-3:
     parser.error("--temperature has to be greater or equal 1e-3")
 
 device = torch.device("cuda" if args.cuda else "cpu")
-
 model = torch.load(args.checkpoint, map_location={'cuda:0': 'cpu'})
 model.eval()
 
@@ -49,34 +43,18 @@ ntokens = len(corpus.dictionary)
 hidden = model.init_hidden(1)
 input = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
 
-num_sents = 1000
-sentiment = SentimentIntensityAnalyzer()
-
-def sentiment_classifier(action):
-    score = sentiment.polarity_scores(action)
-    reward = score['compound']
-    return reward
-
 num_words = args.words
-sent_scores = []
-for j in range(num_sents):
-    with torch.no_grad():
-        sent = ''  # no tracking history
-        for i in range(num_words):
-            output, hidden = model(input, hidden)
-            word_weights = output.squeeze().div(args.temperature).exp().cpu()
-            word_idx = torch.multinomial(word_weights, 1)[0]
+with torch.no_grad():
+    sent = ''  # no tracking history
+    for i in range(num_words):
+        output, hidden = model(input, hidden)
+        word_weights = output.squeeze().div(args.temperature).exp().cpu()
+        word_idx = torch.multinomial(word_weights, 1)[0]
 
-            # updating the value of input
-            input.fill_(word_idx)
+        # updating the value of input
+        input.fill_(word_idx)
 
-            word = corpus.dictionary.idx2word[word_idx]
-            sent += word + ' '
+        word = corpus.dictionary.idx2word[word_idx]
+        sent += word + ' '
 
-        score = sentiment_classifier(sent)
-        sent_scores.append(score)
-
-print(sum(sent_scores)/len(sent_scores))
-plt.plot(sent_scores)
-plt.show()
-
+print(sent)

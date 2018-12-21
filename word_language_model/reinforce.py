@@ -25,10 +25,12 @@ parser.add_argument('--temperature', type=float, default=1.0,
                     help='temperature - higher will increase diversity')
 parser.add_argument('--gamma', type=float, default=0.01,
                     help='gamma higher will increase responsilbility of previous actions')
+parser.add_argument('--lr', type=float, default=0.01,
+                    help='learning rate')
 parser.add_argument('--num_episodes', type=int, default=5,
                     help='num episodes - the number of episodes to train on before weights update')
-parser.add_argument('--num_epochs', type=int, default=3,
-                    help='num_epochs - number of times the episode batches are run')
+parser.add_argument('--num_iter', type=int, default=3,
+                    help='num_iter - number of times the episode batches are run')
 parser.add_argument('--validity', action='store_true',
                     help="Runs the experiment where the reward is for valid words in a sentence.")
 parser.add_argument('--short_sent', action='store_true',
@@ -75,9 +77,10 @@ avg_lengths = []
 lengths = []
 validity_scores = []
 sentiment_scores = []
-learning_rate = 0.01
 
 def save(iteration):
+    # delete previous checkpoints
+
     if args.validity:
         save_filename = "validity_" + str(iteration) + '.pt'
     elif args.sentiment:
@@ -195,7 +198,7 @@ def select_action(state):
     return word, log_prob, word_idx
 
 # backpropagation is done at the end of every epoch
-for j in range(args.num_epochs):
+for j in range(args.num_iter):
     loss_bank = [] # stores the losses of all episodes of an epoch
     state = torch.randint(ntokens, (1, 1), dtype=torch.long).to(device)
     
@@ -239,7 +242,7 @@ for j in range(args.num_epochs):
         # - log_prob * reward to make loss inverse of reward.
         policy_loss = []
         for log_prob, reward in zip(action_probs, rewards):
-            policy_loss.append(-log_prob * reward * learning_rate)
+            policy_loss.append(-log_prob * reward * args.lr)
         policy_loss = torch.sum(torch.stack(policy_loss))
 
         loss_bank.append(policy_loss) 
@@ -250,7 +253,7 @@ for j in range(args.num_epochs):
 
         # log at the end of the epoch
         if i == args.num_episodes - 1:
-            print("Epoch %d, %s" % (j, sent))
+            print("Iteration %d, %s" % (j, sent))
             print("Average lengths: %2.2f" % (avg_lengths[-1]) )
             if args.validity:
                 print("Validity_score: %2.2f" % (sum(policy_rewards)/len(policy_rewards)))
@@ -266,7 +269,7 @@ for j in range(args.num_epochs):
         optimizer.step()
 
     
-save(args.num_epochs)  # save the current model as a checkpoint  
+save(args.num_iter)  # save the current model as a checkpoint  
 
 if args.sentiment:
     plt.plot(sentiment_scores)
